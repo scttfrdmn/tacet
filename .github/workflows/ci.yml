@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Build and unit test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore --configuration Release
+
+      - name: Unit tests
+        run: dotnet test tests/Tacet.Tests/ --no-build --configuration Release --filter "Category!=Integration" --collect:"XPlat Code Coverage"
+
+      - uses: codecov/codecov-action@v5
+        continue-on-error: true
+        with:
+          files: '**/coverage.cobertura.xml'
+
+  integration:
+    name: Integration tests (substrate)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+
+      - name: Install substrate
+        run: go install github.com/scttfrdmn/substrate/cmd/substrate@latest
+
+      - name: Start substrate
+        run: substrate server --address :4566 &
+        shell: bash
+
+      - name: Wait for substrate to be ready
+        run: |
+          for i in $(seq 1 20); do
+            curl -sf http://localhost:4566/health && break
+            sleep 1
+          done
+
+      - name: Restore dependencies
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --no-restore --configuration Release
+
+      - name: Integration tests
+        run: dotnet test tests/Tacet.Tests/ --no-build --configuration Release --filter "Category=Integration"
+        env:
+          BURST_INTEGRATION_TEST: "1"
+          AWS_ENDPOINT_URL: http://localhost:4566
+          AWS_ACCESS_KEY_ID: test
+          AWS_SECRET_ACCESS_KEY: test
+          AWS_DEFAULT_REGION: us-east-1
