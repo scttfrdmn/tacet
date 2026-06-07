@@ -6,6 +6,7 @@ using Amazon.ECS;
 using Amazon.ECS.Model;
 using Amazon.S3;
 using Amazon.S3.Model;
+using SysTask = System.Threading.Tasks.Task;
 
 namespace Tacet.Internal;
 
@@ -222,7 +223,7 @@ internal static class Session
     // S3 upload
     // -------------------------------------------------------------------------
 
-    private static async Task UploadChunksAsync(
+    private static async SysTask UploadChunksAsync(
         AmazonS3Client s3,
         string bucket,
         string sessionId,
@@ -426,7 +427,7 @@ internal static class Session
     // Worker launch
     // -------------------------------------------------------------------------
 
-    private static async Task LaunchWorkersAsync(
+    private static async SysTask LaunchWorkersAsync(
         AmazonECSClient ecs,
         string taskDefArn,
         string sessionId,
@@ -657,7 +658,7 @@ internal static class Session
     // Cleanup
     // -------------------------------------------------------------------------
 
-    private static async Task CleanupAsync(AmazonS3Client s3, string bucket, string sessionId, int chunkCount)
+    private static async SysTask CleanupAsync(AmazonS3Client s3, string bucket, string sessionId, int chunkCount)
     {
         var keys = new List<string>(chunkCount * 3);
         for (int i = 0; i < chunkCount; i++)
@@ -693,7 +694,7 @@ internal static class Session
     // Low-level S3 helpers
     // -------------------------------------------------------------------------
 
-    private static async Task PutTextAsync(
+    private static async SysTask PutTextAsync(
         AmazonS3Client s3, string bucket, string key, string text, CancellationToken ct)
     {
         var req = new PutObjectRequest
@@ -706,7 +707,7 @@ internal static class Session
         await s3.PutObjectAsync(req, ct).ConfigureAwait(false);
     }
 
-    private static async Task PutJsonAsync<T>(
+    private static async SysTask PutJsonAsync<T>(
         AmazonS3Client s3, string bucket, string key, T obj, CancellationToken ct)
     {
         var json = JsonSerializer.Serialize(obj, Protocol.JsonOpts);
