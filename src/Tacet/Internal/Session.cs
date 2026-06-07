@@ -7,6 +7,10 @@ using Amazon.ECS.Model;
 using Amazon.S3;
 using Amazon.S3.Model;
 using SysTask = System.Threading.Tasks.Task;
+using Ec2Filter = Amazon.EC2.Model.Filter;
+using EcsKvp = Amazon.ECS.Model.KeyValuePair;
+using EcsCpuArch = Amazon.ECS.CPUArchitecture;
+using EcsOsFamily = Amazon.ECS.OSFamily;
 
 namespace Tacet.Internal;
 
@@ -103,7 +107,7 @@ internal static class Session
             .ConfigureAwait(false);
 
         // Fire-and-forget cleanup
-        _ = Task.Run(() => CleanupAsync(s3, resolved.S3Bucket, sessionId, chunks.Count), CancellationToken.None);
+        _ = SysTask.Run(() => CleanupAsync(s3, resolved.S3Bucket, sessionId, chunks.Count), CancellationToken.None);
 
         return results;
     }
@@ -165,10 +169,10 @@ internal static class Session
                 }
             }
             if (done.All(x => x)) break;
-            await Task.Delay(2_000, ct).ConfigureAwait(false);
+            await SysTask.Delay(2_000, ct).ConfigureAwait(false);
         }
 
-        _ = Task.Run(() => CleanupAsync(s3, resolved.S3Bucket, sessionId, chunks.Count), CancellationToken.None);
+        _ = SysTask.Run(() => CleanupAsync(s3, resolved.S3Bucket, sessionId, chunks.Count), CancellationToken.None);
     }
 
     // -------------------------------------------------------------------------
@@ -246,7 +250,7 @@ internal static class Session
                 sem.Release();
             }
         });
-        await Task.WhenAll(tasks).ConfigureAwait(false);
+        await SysTask.WhenAll(tasks).ConfigureAwait(false);
     }
 
     // -------------------------------------------------------------------------
@@ -296,9 +300,9 @@ internal static class Session
         // Find the default VPC
         var vpcResp = await ec2.DescribeVpcsAsync(new DescribeVpcsRequest
         {
-            Filters = new List<Filter>
+            Filters = new List<Ec2Filter>
             {
-                new Filter { Name = "isDefault", Values = new List<string> { "true" } }
+                new Ec2Filter { Name = "isDefault", Values = new List<string> { "true" } }
             }
         }, ct).ConfigureAwait(false);
 
@@ -318,10 +322,10 @@ internal static class Session
         // Find subnets in the default VPC
         var subnetResp = await ec2.DescribeSubnetsAsync(new DescribeSubnetsRequest
         {
-            Filters = new List<Filter>
+            Filters = new List<Ec2Filter>
             {
-                new Filter { Name = "vpc-id", Values = new List<string> { vpcId } },
-                new Filter { Name = "defaultForAz", Values = new List<string> { "true" } },
+                new Ec2Filter { Name = "vpc-id", Values = new List<string> { vpcId } },
+                new Ec2Filter { Name = "defaultForAz", Values = new List<string> { "true" } },
             }
         }, ct).ConfigureAwait(false);
 
@@ -333,10 +337,10 @@ internal static class Session
         // Find the default security group
         var sgResp = await ec2.DescribeSecurityGroupsAsync(new DescribeSecurityGroupsRequest
         {
-            Filters = new List<Filter>
+            Filters = new List<Ec2Filter>
             {
-                new Filter { Name = "vpc-id", Values = new List<string> { vpcId } },
-                new Filter { Name = "group-name", Values = new List<string> { "default" } },
+                new Ec2Filter { Name = "vpc-id", Values = new List<string> { vpcId } },
+                new Ec2Filter { Name = "group-name", Values = new List<string> { "default" } },
             }
         }, ct).ConfigureAwait(false);
 
@@ -363,10 +367,10 @@ internal static class Session
         var memoryMb = r.MemoryGb * 1024;
 
         var cpuArch = r.Arch == "arm64"
-            ? Amazon.ECS.Model.CPUArchitecture.ARM64
-            : Amazon.ECS.Model.CPUArchitecture.X86_64;
+            ? EcsCpuArch.ARM64
+            : EcsCpuArch.X86_64;
 
-        var env = new List<Amazon.ECS.Model.KeyValuePair>
+        var env = new List<EcsKvp>
         {
             new() { Name = "BURST_WORKER",     Value = "1" },
             new() { Name = "BURST_SESSION_ID", Value = sessionId },
@@ -471,7 +475,7 @@ internal static class Session
                         new()
                         {
                             Name = "worker",
-                            Environment = new List<Amazon.ECS.Model.KeyValuePair>
+                            Environment = new List<EcsKvp>
                             {
                                 new() { Name = "BURST_TASK_ID",        Value = Protocol.TaskId(i) },
                                 new() { Name = "BURST_FUNCTION_NAME",  Value = fnName },
@@ -496,7 +500,7 @@ internal static class Session
             }
         });
 
-        await Task.WhenAll(tasks).ConfigureAwait(false);
+        await SysTask.WhenAll(tasks).ConfigureAwait(false);
     }
 
     // -------------------------------------------------------------------------
@@ -530,7 +534,7 @@ internal static class Session
             }
 
             if (pending == 0) break;
-            await Task.Delay(2_000, ct).ConfigureAwait(false);
+            await SysTask.Delay(2_000, ct).ConfigureAwait(false);
         }
 
         return statuses;
