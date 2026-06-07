@@ -159,6 +159,58 @@ public static class Tacet
     }
 
     // -------------------------------------------------------------------------
+    // MapTolerant — never throws TacetPartialException
+    // -------------------------------------------------------------------------
+
+    /// <summary>
+    /// Like <see cref="MapAsync{T,U}"/> but never throws <see cref="TacetPartialException"/>.
+    /// Returns one <see cref="TacetResult{U}"/> per input item — successful items carry their
+    /// value; failed items carry an error message.
+    /// </summary>
+    /// <typeparam name="T">Input item type. Must be JSON-serializable.</typeparam>
+    /// <typeparam name="U">Output result type. Must be JSON-serializable.</typeparam>
+    /// <param name="items">Items to process.</param>
+    /// <param name="fn">
+    /// The local async function reference. Used to derive the function name for dispatch.
+    /// The function must have been registered with <see cref="Register{T,U}"/>.
+    /// </param>
+    /// <param name="opts">Optional burst configuration overrides.</param>
+    /// <param name="ct">Cancellation token.</param>
+    /// <returns>Ordered list of per-item results.</returns>
+    /// <exception cref="TacetCostLimitException">Estimated cost exceeds <see cref="MapOptions.MaxCostUsd"/>.</exception>
+    /// <exception cref="TacetSetupException">AWS resource setup or config error.</exception>
+    public static async Task<List<TacetResult<U>>> MapTolerantAsync<T, U>(
+        IEnumerable<T> items,
+        Func<T, Task<U>> fn,
+        MapOptions? opts = null,
+        CancellationToken ct = default)
+        where T : notnull
+        where U : notnull
+    {
+        var fnName = ResolveFunctionName(fn);
+        return await Session.RunTolerantAsync<T, U>(items, fnName, opts, ct).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Synchronous wrapper for <see cref="MapTolerantAsync{T,U}"/>.
+    /// Like <see cref="Map{T,U}"/> but never throws <see cref="TacetPartialException"/>.
+    /// </summary>
+    /// <typeparam name="T">Input item type. Must be JSON-serializable.</typeparam>
+    /// <typeparam name="U">Output result type. Must be JSON-serializable.</typeparam>
+    /// <param name="items">Items to process.</param>
+    /// <param name="fn">The local function reference. Must have been registered with <see cref="Register{T,U}"/>.</param>
+    /// <param name="opts">Optional burst configuration overrides.</param>
+    /// <returns>Ordered list of per-item results.</returns>
+    public static List<TacetResult<U>> MapTolerant<T, U>(
+        IEnumerable<T> items,
+        Func<T, U> fn,
+        MapOptions? opts = null)
+        where T : notnull
+        where U : notnull
+        => MapTolerantAsync(items, x => Task.FromResult(fn(x)), opts)
+            .GetAwaiter().GetResult();
+
+    // -------------------------------------------------------------------------
     // MapStreamAsync — IAsyncEnumerable streaming
     // -------------------------------------------------------------------------
 

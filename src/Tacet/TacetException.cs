@@ -107,6 +107,20 @@ public sealed class TacetTimeoutException : TacetException
     }
 }
 
+/// <summary>Result of a single item from <see cref="Tacet.MapTolerantAsync{T,U}"/>.</summary>
+/// <typeparam name="U">The result type on success.</typeparam>
+public readonly record struct TacetResult<U>(U? Value, string? Error)
+{
+    /// <summary>True when this item succeeded.</summary>
+    public bool IsSuccess => Error is null;
+
+    /// <summary>Factory for a successful result.</summary>
+    public static TacetResult<U> Success(U value) => new(value, null);
+
+    /// <summary>Factory for a failed result.</summary>
+    public static TacetResult<U> Failure(string error) => new(default, error);
+}
+
 /// <summary>
 /// Thrown when AWS resource provisioning fails or the burst configuration is missing or invalid.
 /// Check <see cref="Step"/>, <see cref="Cause"/>, and <see cref="Remediation"/> for guidance.

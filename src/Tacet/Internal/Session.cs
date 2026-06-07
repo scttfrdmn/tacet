@@ -113,6 +113,69 @@ internal static class Session
     }
 
     /// <summary>
+    /// Tolerant variant of <see cref="RunAsync{T,U}"/>: never throws
+    /// <see cref="TacetPartialException"/>. Returns one <see cref="TacetResult{U}"/> per item.
+    /// </summary>
+    internal static async Task<List<TacetResult<U>>> RunTolerantAsync<T, U>(
+        IEnumerable<T> items,
+        string fnName,
+        MapOptions? opts,
+        CancellationToken ct)
+        where T : notnull
+        where U : notnull
+    {
+        var cfg = TacetConfig.Load();
+        var resolved = Resolve(opts, cfg);
+
+        // Cost guard
+        var costPerHour = Protocol.EstimateCostPerHour(resolved.Cpu, resolved.MemoryGb, resolved.Workers);
+        if (resolved.MaxCostUsd > 0 && costPerHour > resolved.MaxCostUsd)
+            throw new TacetCostLimitException(resolved.MaxCostUsd, costPerHour);
+
+        if (resolved.CostAlertUsd > 0 && costPerHour > resolved.CostAlertUsd)
+            Console.Error.WriteLine($"tacet: cost alert — estimated ${costPerHour:F2}/hr exceeds threshold ${resolved.CostAlertUsd:F2}/hr");
+
+        var itemList = items.ToList();
+        if (itemList.Count == 0)
+            return new List<TacetResult<U>>();
+
+        var sessionId = Protocol.GenerateSessionId();
+        var chunkCount = Math.Min(resolved.Workers, itemList.Count);
+        var chunks = ChunkItems(itemList, chunkCount);
+
+        var s3 = AwsHelpers.BuildS3Client(resolved.Region);
+
+        await UploadChunksAsync(s3, resolved.S3Bucket, sessionId, fnName, chunks, ct)
+            .ConfigureAwait(false);
+
+        var manifest = BuildManifest(sessionId, resolved, chunks.Count, itemList.Count, "running", costPerHour);
+        await PutJsonAsync(s3, resolved.S3Bucket, Protocol.ManifestKey(sessionId), manifest, ct)
+            .ConfigureAwait(false);
+
+        var ecs = AwsHelpers.BuildEcsClient(resolved.Region);
+        var ec2 = AwsHelpers.BuildEc2Client(resolved.Region);
+
+        var (subnets, securityGroup) = await DiscoverVpcAsync(ec2, ct).ConfigureAwait(false);
+
+        var taskDefArn = await RegisterTaskDefinitionAsync(
+            ecs, sessionId, resolved, ct).ConfigureAwait(false);
+
+        await LaunchWorkersAsync(
+            ecs, taskDefArn, sessionId, fnName, resolved, subnets, securityGroup, chunks.Count, ct)
+            .ConfigureAwait(false);
+
+        var statuses = await PollUntilDoneAsync(s3, resolved.S3Bucket, sessionId, chunks.Count, ct)
+            .ConfigureAwait(false);
+
+        var results = await CollectResultsTolerantAsync<U>(s3, resolved.S3Bucket, sessionId, chunks, statuses, ct)
+            .ConfigureAwait(false);
+
+        _ = SysTask.Run(() => CleanupAsync(s3, resolved.S3Bucket, sessionId, chunks.Count), CancellationToken.None);
+
+        return results;
+    }
+
+    /// <summary>
     /// Streaming variant: yields results as individual chunks complete.
     /// </summary>
     internal static async IAsyncEnumerable<U> StreamAsync<T, U>(
@@ -631,6 +694,55 @@ internal static class Session
         }
 
         return results;
+    }
+
+    /// <summary>
+    /// Tolerant variant of <see cref="CollectResultsAsync{U}"/>: never throws
+    /// <see cref="TacetPartialException"/>. Returns one <see cref="TacetResult{U}"/> per item.
+    /// </summary>
+    internal static async Task<List<TacetResult<U>>> CollectResultsTolerantAsync<U>(
+        AmazonS3Client s3,
+        string bucket,
+        string sessionId,
+        List<List<JsonElement>> chunks,
+        string?[] statuses,
+        CancellationToken ct)
+        where U : notnull
+    {
+        var out_ = new List<TacetResult<U>>(chunks.Sum(c => c.Count));
+
+        for (int i = 0; i < chunks.Count; i++)
+        {
+            if (statuses[i] == "failed")
+            {
+                for (int j = 0; j < chunks[i].Count; j++)
+                    out_.Add(TacetResult<U>.Failure($"chunk {i} failed entirely"));
+                continue;
+            }
+
+            var payload = await DownloadResultAsync(s3, bucket, sessionId, i, ct).ConfigureAwait(false);
+
+            for (int j = 0; j < payload.Results.Length; j++)
+            {
+                if (payload.Errors[j] is not null)
+                {
+                    out_.Add(TacetResult<U>.Failure(payload.Errors[j]!));
+                }
+                else
+                {
+                    var item = payload.Results[j];
+                    var deserialized = item.HasValue
+                        ? item.Value.Deserialize<U>(Protocol.JsonOpts)
+                        : default;
+                    if (deserialized is not null)
+                        out_.Add(TacetResult<U>.Success(deserialized));
+                    else
+                        out_.Add(TacetResult<U>.Failure("null result"));
+                }
+            }
+        }
+
+        return out_;
     }
 
     private static async Task<ResultPayload> DownloadResultAsync(

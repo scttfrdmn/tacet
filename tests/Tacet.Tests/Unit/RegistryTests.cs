@@ -137,4 +137,52 @@ public sealed class RegistryTests : IDisposable
         Tacet.Register("square", (int x) => x * x);
         Assert.True(FunctionRegistry.IsRegistered("square"));
     }
+
+    // -------------------------------------------------------------------------
+    // TacetResult type tests
+    // -------------------------------------------------------------------------
+
+    [Fact]
+    public void TacetResult_Success_IsSuccess()
+    {
+        var r = TacetResult<int>.Success(42);
+        Assert.True(r.IsSuccess);
+        Assert.Equal(42, r.Value);
+        Assert.Null(r.Error);
+    }
+
+    [Fact]
+    public void TacetResult_Failure_IsNotSuccess()
+    {
+        var r = TacetResult<int>.Failure("something went wrong");
+        Assert.False(r.IsSuccess);
+        Assert.Equal("something went wrong", r.Error);
+    }
+
+    [Fact]
+    public void TacetResult_DefaultValue_HasNullError_IsSuccess()
+    {
+        // A record struct created with (value, null) should be success
+        var r = new TacetResult<int>(99, null);
+        Assert.True(r.IsSuccess);
+        Assert.Equal(99, r.Value);
+    }
+
+    [Fact]
+    public void TacetResult_WithError_IsNotSuccess()
+    {
+        var r = new TacetResult<int>(default, "failed");
+        Assert.False(r.IsSuccess);
+        Assert.Equal("failed", r.Error);
+    }
+
+    [Fact]
+    public void MapTolerant_MethodExists_OnTacetClass()
+    {
+        // Verify MapTolerant and MapTolerantAsync exist by checking reflection
+        var methods = typeof(Tacet).GetMethods(
+            System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+        Assert.Contains(methods, m => m.Name == "MapTolerant");
+        Assert.Contains(methods, m => m.Name == "MapTolerantAsync");
+    }
 }
